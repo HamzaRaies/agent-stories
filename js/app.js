@@ -289,10 +289,22 @@ function makeAPICall(endpoint, options = {}) {
             if (hasJsonContent) {
                 try {
                     const errorData = await response.json();
-                    const errorMsg = errorData.detail || errorData.message || `Request failed with status ${response.status}`;
+                    let errorMsg = errorData.detail || errorData.message;
+
+                    // Handle validation errors (array of objects)
+                    if (Array.isArray(errorMsg)) {
+                        errorMsg = errorMsg.map(e => e.msg).join(', ');
+                    }
+
+                    if (!errorMsg) {
+                        errorMsg = `Request failed with status ${response.status}`;
+                    }
                     throw new Error(errorMsg);
                 } catch (parseError) {
-                    // If JSON parsing fails, use status text
+                    // If JSON parsing fails (or custom parsing fails), rethrow if it's our own error, else generic
+                    if (parseError.message !== 'Unexpected token < in JSON at position 0') {
+                        throw parseError; // Rethrow existing error info
+                    }
                     throw new Error(`HTTP ${response.status}: ${response.statusText || 'Request failed'}`);
                 }
             } else {
@@ -610,8 +622,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- File Upload Modal Logic ---
     if (uploadBtn) uploadBtn.addEventListener('click', () => {
-        // Upgrade lock: Always show upgrade modal for uploads
-        openModal(upgradeModal);
+        if (checkAuthBeforeAction()) {
+            openModal(uploadModal);
+        }
     });
     if (closeModalBtn) closeModalBtn.addEventListener('click', () => uploadModal.classList.remove('active'));
     if (uploadModal) uploadModal.addEventListener('click', (e) => {
@@ -637,16 +650,42 @@ document.addEventListener('DOMContentLoaded', () => {
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropzone.style.borderColor = 'var(--text-primary)';
-            if (e.dataTransfer.files.length > 0 && checkAuthBeforeAction()) {
-                handleFiles(e.dataTransfer.files);
+            if (e.dataTransfer.files.length > 0) {
+                if (checkAuthBeforeAction()) {
+                    const files = Array.from(e.dataTransfer.files);
+                    const validFiles = files.filter(file => {
+                        const ext = '.' + file.name.split('.').pop().toLowerCase();
+                        return ['.pdf', '.docx', '.txt'].includes(ext);
+                    });
+
+                    if (validFiles.length > 0) {
+                        handleFiles(validFiles);
+                    } else {
+                        showToast('Only .pdf, .docx, and .txt files are supported.', 'error');
+                    }
+                }
             }
         });
     }
 
     if (fileInput) {
         fileInput.addEventListener('change', (e) => {
-            if (fileInput.files.length > 0 && checkAuthBeforeAction()) {
-                handleFiles(fileInput.files);
+            if (fileInput.files.length > 0) {
+                if (checkAuthBeforeAction()) {
+                    const files = Array.from(fileInput.files);
+                    const validFiles = files.filter(file => {
+                        const ext = '.' + file.name.split('.').pop().toLowerCase();
+                        return ['.pdf', '.docx', '.txt'].includes(ext);
+                    });
+
+                    if (validFiles.length > 0) {
+                        handleFiles(validFiles);
+                    } else {
+                        // Reset input so user can try again
+                        fileInput.value = '';
+                        showToast('Only .pdf, .docx, and .txt files are supported.', 'error');
+                    }
+                }
             }
         });
     }
@@ -778,6 +817,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const suggestionsList = document.getElementById('suggestions-list');
 
     // Load suggestions from JSON and display in modal
+    const allowedExtensions = ['.pdf', '.docx', '.txt'];
+    // Auto-hide backend error overlay when connection is restored
+    setInterval(async () => {
+        const errorOverlay = document.getElementById('error-overlay');
+        // Only check if overlay is visible
+        if (errorOverlay && !errorOverlay.classList.contains('hidden')) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/health`);
+                if (response.ok) {
+                    errorOverlay.classList.add('hidden');
+                    // Optional: Reload history once reconnected
+                    if (window.loadHistory) window.loadHistory();
+                }
+            } catch (e) {
+                // Still offline, do nothing
+            }
+        }
+    }, 5000);
+
+    // Initialize application
+    async function init() {
+        // Check backend connection
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/health`);
+            if (!response.ok) throw new Error('Backend unhealthy');
+        } catch (error) {
+            console.error('Backend connection failed:', error);
+            // Show error overlay
+            const errorOverlay = document.getElementById('error-overlay');
+            if (errorOverlay) errorOverlay.classList.remove('hidden');
+            return;
+        }
+    }
+
+    // Call init to check connection
+    init();
     async function loadSuggestions() {
         try {
             const response = await fetch(`${API_BASE_URL}/suggestion/info.json`);
@@ -1191,11 +1266,23 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('=== STORY GENERATION COMPLETED ===');
         };
 
+        let loadingBubble = null;
+        let loadingInterval = null;
+
         try {
             if (isFirstInteraction) {
                 transitionToChatMode();
                 isFirstInteraction = false;
             }
+
+            // Client-side validation
+            if (!text || text.trim().length < 10) {
+                showToast('Story prompt must be at least 10 characters long.', 'error', 4000);
+                addBubble('ai', 'That prompt is a bit too short. Please provide more details (at least 10 characters) to help me generate a good story.');
+                cleanup();
+                return;
+            }
+
 
             let userContent = text;
             let promptText = text;
@@ -1204,7 +1291,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (uploadedFileData && uploadedFileData.extracted_text) {
                 // Combine file content with user prompt
                 promptText = `${uploadedFileData.extracted_text}\n\nUser request: ${text}`;
-                userContent = `[File: ${uploadedFileData.filename}] <br>` + (text || 'Generating story from uploaded file...');
+
+                // Show text snippet in the bubble for context (first 300 chars)
+                const snippet = uploadedFileData.extracted_text.substring(0, 300) + (uploadedFileData.extracted_text.length > 300 ? '...' : '');
+
+                // Display exactly what the user will see later (extracted text + their prompt)
+                userContent = `<strong>[File: ${uploadedFileData.filename}]</strong><br>
+                               <div class="extracted-text-preview" style="font-size: 0.9em; opacity: 0.8; margin: 8px 0; padding-left: 8px; border-left: 2px solid var(--accent-light);">
+                                   ${snippet}
+                               </div>` + (text || '');
 
                 // Clear uploaded file data after use
                 uploadedFileData = null;
@@ -1239,7 +1334,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'Creating scene descriptions...'
             ];
             let messageIndex = 0;
-            const loadingBubble = document.createElement('div');
+            loadingBubble = document.createElement('div');
             loadingBubble.className = 'bubble-wrap ai loading-indicator';
             loadingBubble.innerHTML = `
                 <div class="typing-status">
@@ -1252,7 +1347,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chatFeed.appendChild(loadingBubble);
             chatFeed.scrollTop = chatFeed.scrollHeight;
 
-            const loadingInterval = setInterval(() => {
+            loadingInterval = setInterval(() => {
                 messageIndex = (messageIndex + 1) % loadingMessages.length;
                 const messageEl = loadingBubble.querySelector('.loading-message');
                 if (messageEl) {
@@ -1294,6 +1389,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     title: response.title,
                     timestamp: Date.now()
                 }));
+
+                // Immediately update sidebar history so the new story appears in real-time
+                setTimeout(() => {
+                    if (window.loadHistory) window.loadHistory();
+                }, 100);
             }
 
             // Update context title immediately
@@ -1368,6 +1468,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Remove loading bubble
             clearInterval(loadingInterval);
             loadingBubble.remove();
+            loadingBubble = null; // Prevent double removal
 
             // Display the generated scenes with images (after both are done)
             renderStoryScenes(response);
@@ -1390,12 +1491,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             // Clear the generation flag on error too
             cleanup();
-            if (typeof loadingInterval !== 'undefined') clearInterval(loadingInterval);
+            if (loadingInterval) clearInterval(loadingInterval);
             if (loadingBubble && loadingBubble.parentNode) loadingBubble.remove();
+
             console.error('=== STORY GENERATION ERROR ===');
             console.error('Error details:', error);
-            console.error('Error message:', error.message);
-            console.error('Error stack:', error.stack);
+
             let errorMsg = error.message || 'Failed to generate scenes. Please try again.';
 
             // Check for quota/rate limit errors
@@ -1408,6 +1509,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             showToast(errorMsg, 'error', 6000);
+
             addBubble('ai', `Error: ${errorMsg}`);
         }
 
