@@ -21,12 +21,12 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000, env="PORT")
     
     # Security
-    SECRET_KEY: str = Field(..., env="SECRET_KEY", min_length=32)
+    SECRET_KEY: str = Field(default="", env="SECRET_KEY")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=1440, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 24 hours
     
     # CORS
-    CORS_ORIGINS: str = Field(default="*", env="CORS_ORIGINS")
+    CORS_ORIGINS: List[str] = Field(default=["*"], env="CORS_ORIGINS")
     
     # Database
     DATABASE_URL: str = Field(default="sqlite:///./database/story_scenes.db", env="DATABASE_URL")
@@ -47,16 +47,30 @@ class Settings(BaseSettings):
     
     @validator("CORS_ORIGINS", pre=True)
     def parse_cors_origins(cls, v):
+        if v is None:
+            return ["*"]
         if isinstance(v, str):
-            if v == "*":
+            if v == "*" or v == '["*"]':
                 return ["*"]
-            return [origin.strip() for origin in v.split(",")]
-        return v
+            # Handle JSON array string like '["http://localhost:8080","https://example.com"]'
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+            # Handle comma-separated string
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        if isinstance(v, list):
+            return v
+        return ["*"]
     
-    @validator("SECRET_KEY", pre=True)
+    @validator("SECRET_KEY", pre=True, always=True)
     def validate_secret_key(cls, v):
         if not v or len(v) < 32:
-            # Generate a random secret key if not provided (for development only)
+            # Generate a random secret key if not provided
             import secrets
             return secrets.token_urlsafe(32)
         return v
