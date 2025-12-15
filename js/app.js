@@ -431,20 +431,39 @@ document.addEventListener('DOMContentLoaded', () => {
         window.pendingSharedStoryId = parseInt(sharedStoryId, 10);
     }
 
-    // 1. Loader Logic
+    // 1. Loader Logic - Always hide after timeout, regardless of init status
     const loader = document.getElementById('loader');
     const app = document.getElementById('app');
 
-    setTimeout(() => {
-        if (loader) loader.classList.add('fade-out');
-        setTimeout(() => {
+    // Ensure loader always hides, even if there are errors
+    const hideLoader = () => {
+        try {
+            if (loader) {
+                loader.classList.add('fade-out');
+                setTimeout(() => {
+                    if (loader) loader.style.display = 'none';
+                    if (app) {
+                        app.classList.remove('hidden');
+                        app.classList.add('fade-in');
+                    }
+                }, 800);
+            }
+        } catch (error) {
+            console.error('Error hiding loader:', error);
+            // Force hide if fade-out fails
             if (loader) loader.style.display = 'none';
             if (app) {
                 app.classList.remove('hidden');
-                app.classList.add('fade-in');
             }
-        }, 800);
-    }, 2500);
+        }
+    };
+
+    // Hide loader after 2.5 seconds (or immediately if DOM is ready)
+    if (document.readyState === 'complete') {
+        setTimeout(hideLoader, 1000);
+    } else {
+        setTimeout(hideLoader, 2500);
+    }
 
     // 2. Authentication Modals
     const loginModal = document.getElementById('login-modal');
@@ -838,21 +857,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize application
     async function init() {
-        // Check backend connection
+        // Check backend connection (non-blocking with timeout)
         try {
-            const response = await fetch(`${API_BASE_URL}/api/health`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            const response = await fetch(`${API_BASE_URL}/api/health`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            
             if (!response.ok) throw new Error('Backend unhealthy');
+            console.log('Backend connection successful');
         } catch (error) {
-            console.error('Backend connection failed:', error);
-            // Show error overlay
-            const errorOverlay = document.getElementById('error-overlay');
-            if (errorOverlay) errorOverlay.classList.remove('hidden');
-            return;
+            if (error.name === 'AbortError') {
+                console.warn('Backend health check timed out (non-critical)');
+            } else {
+                console.warn('Backend health check failed (non-critical):', error.message);
+            }
+            // Don't block app loading - backend might be starting up
+            // The app will show errors when actual API calls are made
         }
     }
 
-    // Call init to check connection
-    init();
+    // Call init to check connection (don't await - non-blocking)
+    init().catch(err => console.warn('Init error (non-critical):', err));
     async function loadSuggestions() {
         try {
             const response = await fetch(`${API_BASE_URL}/suggestion/info.json`);
