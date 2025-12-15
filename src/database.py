@@ -4,7 +4,6 @@ Database Operations using SQLAlchemy
 import sqlite3
 import os
 from typing import Optional, List, Dict
-import hashlib
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'story_scenes.db')
 
@@ -65,8 +64,9 @@ def init_db():
     print("Database initialized successfully")
 
 def hash_password(password: str) -> str:
-    """Hash password using SHA256"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash password using bcrypt"""
+    from src.auth import get_password_hash
+    return get_password_hash(password)
 
 def create_user(username: str, email: str, password: str) -> Optional[int]:
     """Create a new user"""
@@ -116,7 +116,8 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify password against hash"""
-    return hash_password(password) == password_hash
+    from src.auth import verify_password as verify_pwd
+    return verify_pwd(password, password_hash)
 
 def update_user_username(user_id: int, new_username: str) -> bool:
     """Update user's username"""

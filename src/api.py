@@ -1,14 +1,21 @@
 """
-FastAPI Backend Server
+FastAPI Backend Server - Production Ready
 """
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Header
+import os
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
-import os
-import json
-from datetime import datetime
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from src.models import (
     UserRegister, UserLogin, UserResponse, StoryInput, StoryResponse, SceneOutput,
@@ -16,7 +23,7 @@ from src.models import (
 )
 from pydantic import BaseModel as PydanticBaseModel, Field
 from src.database import (
-    init_db, create_user, get_user_by_email, get_user_by_id, verify_password,
+    init_db, create_user, get_user_by_email, get_user_by_id,
     create_story, get_story, get_user_stories, create_scene, get_story_scenes,
     log_agent_decision, log_user_query, create_report, set_metadata,
     update_story, delete_story, archive_story, update_user_username, update_user_password
@@ -25,24 +32,65 @@ from src.scene_generator import SceneGenerator
 from src.image_generator import ImageGenerator
 from src.analytics import AnalyticsEngine
 from src.memory import AgentMemory
-from dotenv import load_dotenv
+from src.config import settings
+from src.auth import (
+    verify_password, get_password_hash, create_access_token,
+    get_user_id_from_token
+)
 
-load_dotenv()
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper()),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+    ]
+)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Story-to-Scene Generator API")
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
-# Force CORS headers on all responses (including StaticFiles)
+# Startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Initializing database...")
+    init_db()
+    logger.info("Application startup complete")
+    yield
+    # Shutdown
+    logger.info("Application shutdown")
+
+# Create FastAPI app
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    lifespan=lifespan
+)
+
+# Configure rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers middleware
 @app.middleware("http")
-async def add_cors_headers(request, call_next):
+async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if not settings.DEBUG:
+        response.headers["X-Powered-By"] = ""
     return response
 
-
-# CORS Configuration - Explicitly allow all methods including DELETE and PUT
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -52,86 +100,136 @@ app.add_middleware(
 # Security
 security = HTTPBearer(auto_error=False)
 
-# Initialize database on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-
-# Dependency to get current user (simplified - in production use JWT)
+# Dependency to get current user with JWT
 def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> int:
-    """Get current user ID from token (simplified for now)"""
-    # In production, decode JWT token here
-    # For now, we'll use a simple user_id in the token
+    """Get current user ID from JWT token"""
     if not credentials:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        user_id = int(credentials.credentials)
-        # Verify user exists by checking database
-        from src.database import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-        if not cursor.fetchone():
-            conn.close()
-            raise HTTPException(status_code=401, detail="User not found")
-        conn.close()
-        return user_id
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid token format")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
-
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token = credentials.credentials
+    user_id = get_user_id_from_token(token)
+    
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Verify user exists
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return user_id
 
 # Authentication Endpoints
 @app.post("/api/auth/register", response_model=UserResponse)
-async def register(user_data: UserRegister):
+@limiter.limit("10/minute")
+async def register(request: Request, user_data: UserRegister):
     """Register a new user"""
-    user_id = create_user(user_data.username, user_data.email, user_data.password)
-    if not user_id:
-        raise HTTPException(status_code=400, detail="Email or username already exists")
-    
-    user = get_user_by_email(user_data.email)
-    return UserResponse(
-        id=user["id"],
-        username=user["username"],
-        email=user["email"],
-        plan=user["plan"],
-        created_at=user["created_at"]
-    )
-
-
-@app.post("/api/auth/login")
-async def login(credentials: UserLogin):
-    """Login user"""
-    user = get_user_by_email(credentials.email)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    if not verify_password(credentials.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # In production, return JWT token
-    return {
-        "access_token": str(user["id"]),
-        "token_type": "bearer",
-        "user": UserResponse(
+    try:
+        user_id = create_user(user_data.username, user_data.email, user_data.password)
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email or username already exists"
+            )
+        
+        user = get_user_by_email(user_data.email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve user after creation"
+            )
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": str(user_id)})
+        
+        logger.info(f"User registered: {user_data.email}")
+        
+        return UserResponse(
             id=user["id"],
             username=user["username"],
             email=user["email"],
             plan=user["plan"],
             created_at=user["created_at"]
         )
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed"
+        )
+
+
+@app.post("/api/auth/login")
+@limiter.limit("10/minute")
+async def login(request: Request, credentials: UserLogin):
+    """Login user"""
+    try:
+        user = get_user_by_email(credentials.email)
+        if not user:
+            logger.warning(f"Login attempt with non-existent email: {credentials.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+        
+        if not verify_password(credentials.password, user["password_hash"]):
+            logger.warning(f"Invalid password attempt for: {credentials.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+        
+        # Create JWT token
+        access_token = create_access_token(data={"sub": str(user["id"])})
+        
+        logger.info(f"User logged in: {credentials.email}")
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "user": UserResponse(
+                id=user["id"],
+                username=user["username"],
+                email=user["email"],
+                plan=user["plan"],
+                created_at=user["created_at"]
+            )
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
+        )
 
 
 # Story Generation Endpoints
 @app.post("/api/generate-scenes", response_model=StoryResponse)
-async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_current_user)):
+@limiter.limit("5/minute")
+async def generate_scenes(request: Request, story_input: StoryInput, user_id: int = Depends(get_current_user)):
     """Generate scenes from story prompt"""
     story_id = None
     try:
         # Limit max_scenes to 8
         max_scenes = min(story_input.max_scenes, 8)
+        
         # Initialize generators
         analytics = AnalyticsEngine()
         memory = AgentMemory(user_id)
@@ -144,27 +242,24 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
         # Classify the story
         classification = analytics.classify(story_input.prompt)
         genre = classification.get("genre", "Drama")
-        # Determine style (from input, preferences, or classification)
         style = story_input.style or preferences.get("preferred_style") or classification.get("style", "Cinematic")
         
-        # Initialize scene generator (style is not used in scene generation, only in image generation)
+        # Initialize scene generator
         scene_gen = SceneGenerator(max_scenes=max_scenes)
         
-        # Generate title from prompt using LLM 
+        # Generate title from prompt using LLM
         try:
             title = analytics.generate_title(story_input.prompt)
         except Exception as title_error:
-            print(f"Title generation failed: {title_error}")
-            # Fallback to a better default title
+            logger.warning(f"Title generation failed: {title_error}")
             words = story_input.prompt.split()[:6]
             title = " ".join(words) + ("..." if len(story_input.prompt.split()) > 6 else "")
             if len(title) > 50:
                 title = title[:47] + "..."
         
-        # Store original_title separately - this will never change, even when user renames
         original_title = title
         
-        # Create story record FIRST - ensure it's saved even if generation fails
+        # Create story record FIRST
         story_id = create_story(user_id, title, story_input.prompt, genre, style, original_title)
         
         # Update memory
@@ -174,15 +269,13 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
         # Log agent decision
         log_agent_decision(story_id, "genre_classification", json.dumps(classification), 0.8)
         
-        # Generate scenes (with error handling for rate limits)
+        # Generate scenes
         try:
             scenes_data = scene_gen.generate_scenes(story_input.prompt)
         except Exception as scene_error:
             error_msg = str(scene_error)
-            # If scene generation fails due to quota, create a basic scene from prompt
-            if "quota" in error_msg.lower() or "429" in error_msg or "rate limit" in error_msg.lower() or "ResourceExhausted" in error_msg:
-                print(f"Scene generation failed due to quota: {scene_error}")
-                # Create a basic scene structure so story can still be saved
+            if any(keyword in error_msg.lower() for keyword in ["quota", "429", "rate limit", "resourceexhausted"]):
+                logger.warning(f"Scene generation failed due to quota: {scene_error}")
                 scenes_data = [{
                     "scene_number": 1,
                     "scene_text": story_input.prompt[:200] + "..." if len(story_input.prompt) > 200 else story_input.prompt,
@@ -195,13 +288,13 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
             patterns = analytics.detect_patterns(scenes_data)
             log_agent_decision(story_id, "pattern_detection", json.dumps(patterns), patterns.get("visual_consistency_score", 0.7))
         except Exception as pattern_error:
-            print(f"Pattern detection failed: {pattern_error}")
+            logger.warning(f"Pattern detection failed: {pattern_error}")
         
         try:
             summary = analytics.summarize(story_input.prompt, "story")
             set_metadata(story_id, "summary", summary)
         except Exception as summary_error:
-            print(f"Summary generation failed: {summary_error}")
+            logger.warning(f"Summary generation failed: {summary_error}")
             summary = "Story summary unavailable"
         
         # Save scenes to database
@@ -214,8 +307,7 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
                 scene_data["cinematic_prompt"]
             )
             
-            # Calculate scores
-            confidence = 0.8  # Can be improved with actual scoring
+            confidence = 0.8
             completeness = min(1.0, len(scene_data["scene_text"]) / 100)
             
             scene_outputs.append(SceneOutput(
@@ -226,15 +318,18 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
                 completeness_score=completeness
             ))
         
-        # Update story status to completed
+        # Update story status
         from src.database import get_db_connection
         conn = get_db_connection()
-        conn.execute("UPDATE stories SET status = 'completed' WHERE id = ?", (story_id,))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("UPDATE stories SET status = 'completed' WHERE id = ?", (story_id,))
+            conn.commit()
+        finally:
+            conn.close()
         
-        # Add assistant message to memory
         memory.add_message("assistant", f"Generated {len(scene_outputs)} scenes")
+        
+        logger.info(f"Story generated successfully: story_id={story_id}, user_id={user_id}")
         
         return StoryResponse(
             story_id=story_id,
@@ -246,39 +341,43 @@ async def generate_scenes(story_input: StoryInput, user_id: int = Depends(get_cu
             total_scenes=len(scene_outputs),
             status="completed",
             created_at=datetime.now().isoformat(),
-            original_title=original_title  # Include original_title in response
+            original_title=original_title
         )
     
     except Exception as e:
+        logger.error(f"Error generating scenes: {str(e)}", exc_info=True)
         if story_id:
             try:
                 from src.database import get_db_connection
                 conn = get_db_connection()
-                conn.execute("UPDATE stories SET status = 'failed' WHERE id = ?", (story_id,))
-                conn.commit()
-                conn.close()
-            except:
+                try:
+                    conn.execute("UPDATE stories SET status = 'failed' WHERE id = ?", (story_id,))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
                 pass
         
-        raise HTTPException(status_code=500, detail=f"Error generating scenes: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating scenes: {str(e)}"
+        )
 
 
 @app.post("/api/generate-images/{story_id}")
-async def generate_images(story_id: int, user_id: int = Depends(get_current_user)):
+@limiter.limit("3/minute")
+async def generate_images(request: Request, story_id: int, user_id: int = Depends(get_current_user)):
     """Generate images for scenes - handles rate limits gracefully"""
-    # Verify story belongs to user
     story = get_story(story_id, user_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
     scenes = get_story_scenes(story_id)
     if not scenes:
-        raise HTTPException(status_code=404, detail="No scenes found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No scenes found")
     
     try:
-        # Get style from story for image generation
         story_style = story.get("style", "Cinematic")
-        # Initialize ImageGenerator with story_id and style for unique filenames and style-appropriate images
         image_gen = ImageGenerator(story_id=story_id, style=story_style)
         image_paths = []
         image_urls = []
@@ -293,49 +392,39 @@ async def generate_images(story_id: int, user_id: int = Depends(get_current_user
                     "cinematic_prompt": scene["cinematic_prompt"]
                 }
                 
-                # Add timeout wrapper to prevent hanging
                 import concurrent.futures
-                
-                # Run image generation with timeout
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(image_gen.generate_image_for_scene, scene_dict)
                     try:
-                        # Increased timeout to allow for retries (3 attempts * 120s = up to 6 minutes)
-                        # But we'll use 5 minutes to be safe
                         path = future.result(timeout=300)
                     except concurrent.futures.TimeoutError:
-                        raise Exception("Image generation timed out after 5 minutes (including retries)")
-                    except Exception as e:
-                        raise e
+                        raise Exception("Image generation timed out after 5 minutes")
                 
                 image_paths.append(path)
-                
-                # Convert path to URL - get just the filename
                 filename = os.path.basename(path)
                 image_url = f"/scene_images/{filename}"
                 image_urls.append(image_url)
                 
-                # Update scene with image path and URL
                 from src.database import get_db_connection
                 conn = get_db_connection()
-                conn.execute("UPDATE scenes SET image_path = ?, image_url = ? WHERE id = ?", 
-                            (path, image_url, scene["id"]))
-                conn.commit()
-                conn.close()
+                try:
+                    conn.execute("UPDATE scenes SET image_path = ?, image_url = ? WHERE id = ?", 
+                                (path, image_url, scene["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
                 
             except Exception as scene_error:
                 error_msg = str(scene_error)
-                print(f"Error generating image for scene {scene['scene_number']}: {error_msg}")
+                logger.warning(f"Error generating image for scene {scene['scene_number']}: {error_msg}")
                 
-                # Check if it's a rate limit error
-                if "429" in error_msg or "rate limit" in error_msg.lower() or "throttled" in error_msg.lower() or "quota" in error_msg.lower():
+                if any(keyword in error_msg.lower() for keyword in ["429", "rate limit", "throttled", "quota"]):
                     rate_limit_hit = True
                     break
                 else:
                     failed_scenes.append(scene["scene_number"])
                     continue
         
-        # If rate limit was hit, return immediately with partial results
         if rate_limit_hit:
             return {
                 "message": f"Rate limit reached. Generated {len(image_paths)}/{len(scenes)} images. Please wait and try again later.",
@@ -347,7 +436,6 @@ async def generate_images(story_id: int, user_id: int = Depends(get_current_user
                 "total": len(scenes)
             }
         
-        # Return success (even if some scenes failed)
         if failed_scenes:
             return {
                 "message": f"Generated {len(image_paths)}/{len(scenes)} images. Some scenes failed.",
@@ -357,6 +445,7 @@ async def generate_images(story_id: int, user_id: int = Depends(get_current_user
                 "failed_scenes": failed_scenes
             }
         
+        logger.info(f"Images generated successfully for story_id={story_id}")
         return {
             "message": "Images generated successfully",
             "image_paths": image_paths,
@@ -365,14 +454,17 @@ async def generate_images(story_id: int, user_id: int = Depends(get_current_user
         }
     
     except Exception as e:
+        logger.error(f"Error generating images: {str(e)}", exc_info=True)
         error_msg = str(e)
-        # Check if it's a rate limit error
-        if "429" in error_msg or "rate limit" in error_msg.lower() or "throttled" in error_msg.lower():
+        if any(keyword in error_msg.lower() for keyword in ["429", "rate limit", "throttled"]):
             raise HTTPException(
-                status_code=429,
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Rate limit reached. Please wait a moment and try again. Your story is saved and you can generate images later."
             )
-        raise HTTPException(status_code=500, detail=f"Error generating images: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating images: {str(e)}"
+        )
 
 
 # History Endpoints
@@ -410,7 +502,6 @@ async def get_archived_history(user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # Get only archived stories
         cursor.execute(
             "SELECT * FROM stories WHERE user_id = ? AND archived = 1 ORDER BY created_at DESC",
             (user_id,)
@@ -432,16 +523,15 @@ async def get_archived_history(user_id: int = Depends(get_current_user)):
 async def update_username_endpoint(request: UpdateUsernameRequest, user_id: int = Depends(get_current_user)):
     """Update user's username"""
     if not request.username or len(request.username.strip()) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username must be at least 3 characters")
     
     success = update_user_username(user_id, request.username.strip())
     if not success:
-        raise HTTPException(status_code=400, detail="Username already exists or update failed")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists or update failed")
     
-    # Get updated user data
     user = get_user_by_id(user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     
     return UserResponse(
         id=user["id"],
@@ -451,51 +541,50 @@ async def update_username_endpoint(request: UpdateUsernameRequest, user_id: int 
         created_at=user["created_at"]
     )
 
+
 @app.put("/api/user/password")
 async def update_password_endpoint(request: UpdatePasswordRequest, user_id: int = Depends(get_current_user)):
     """Update user's password"""
     if not request.password or len(request.password.strip()) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 6 characters")
     
     success = update_user_password(user_id, request.password.strip())
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to update password")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update password")
     
     return {"message": "Password updated successfully"}
 
-# Story CRUD endpoints - Order matters: PUT and DELETE before GET to ensure proper registration
+
 @app.put("/api/story/{story_id}")
 async def update_story_title_endpoint(
-    story_id: int, 
-    request: UpdateStoryRequest, 
+    story_id: int,
+    request: UpdateStoryRequest,
     user_id: int = Depends(get_current_user)
 ):
     """Update story title"""
     if not request or not hasattr(request, 'title') or not request.title:
-        raise HTTPException(status_code=400, detail="Title is required")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title is required")
     
     success = update_story(story_id, user_id, request.title.strip())
     if not success:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
     return {"message": "Story updated successfully", "story_id": story_id}
 
 
 @app.delete("/api/story/{story_id}")
 async def delete_story_endpoint(
-    story_id: int, 
+    story_id: int,
     user_id: int = Depends(get_current_user)
 ):
     """Delete a story"""
-    # Verify story exists
     story = get_story(story_id, user_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
-    # Delete the story
     success = delete_story(story_id, user_id)
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete story")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete story")
     
     return {"message": "Story deleted successfully", "story_id": story_id}
 
@@ -506,15 +595,13 @@ async def archive_story_endpoint(
     user_id: int = Depends(get_current_user)
 ):
     """Archive a story"""
-    # Verify story exists
     story = get_story(story_id, user_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
-    # Archive the story
     success = archive_story(story_id, user_id, archived=True)
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to archive story")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to archive story")
     
     return {"message": "Story archived successfully", "story_id": story_id}
 
@@ -525,15 +612,13 @@ async def unarchive_story_endpoint(
     user_id: int = Depends(get_current_user)
 ):
     """Unarchive a story"""
-    # Verify story exists
     story = get_story(story_id, user_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
-    # Unarchive the story
     success = archive_story(story_id, user_id, archived=False)
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to unarchive story")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unarchive story")
     
     return {"message": "Story unarchived successfully", "story_id": story_id}
 
@@ -545,11 +630,10 @@ async def get_story_public(story_id: int):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # Get story without user_id check (for sharing)
         cursor.execute("SELECT * FROM stories WHERE id = ?", (story_id,))
         row = cursor.fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="Story not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
         story = dict(row)
     finally:
         conn.close()
@@ -594,7 +678,7 @@ async def get_story_details(story_id: int, user_id: int = Depends(get_current_us
     """Get full story details (requires authentication)"""
     story = get_story(story_id, user_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
     
     scenes_data = get_story_scenes(story_id)
     scenes = [SceneOutput(
@@ -610,10 +694,7 @@ async def get_story_details(story_id: int, user_id: int = Depends(get_current_us
     from src.database import get_metadata
     summary = get_metadata(story_id, "summary")
     
-    # Get original_title from database, fallback to title if not set (for old stories)
     original_title = story.get("original_title") or story["title"]
-    
-    # Get archived status
     archived_status = story.get("archived", 0)
     if archived_status is None:
         archived_status = 0
@@ -629,8 +710,8 @@ async def get_story_details(story_id: int, user_id: int = Depends(get_current_us
         total_scenes=len(scenes),
         status=story["status"],
         created_at=story["created_at"],
-        original_title=original_title,  # Include original_title in response
-        archived=archived_status  # Include archived status
+        original_title=original_title,
+        archived=archived_status
     )
 
 
@@ -639,11 +720,8 @@ async def get_story_details(story_id: int, user_id: int = Depends(get_current_us
 async def search_stories(query: SearchQuery, user_id: int = Depends(get_current_user)):
     """Search stories by keywords"""
     stories = get_user_stories(user_id)
-    # Simple keyword search (can be improved with full-text search)
     results = [s for s in stories if query.query.lower() in s["title"].lower() or query.query.lower() in s.get("user_prompt", "").lower()]
-    
     log_user_query(user_id, query.query, "search", len(results))
-    
     return results
 
 
@@ -659,7 +737,6 @@ async def filter_stories(filter_query: FilterQuery, user_id: int = Depends(get_c
         results = [s for s in results if s.get("style") == filter_query.style]
     
     log_user_query(user_id, json.dumps(filter_query.dict()), "filter", len(results))
-    
     return results
 
 
@@ -668,18 +745,15 @@ async def categorize_story(request: CategorizeRequest, user_id: int = Depends(ge
     """Categorize a story"""
     analytics = AnalyticsEngine()
     classification = analytics.classify(request.story_text)
-    
     log_user_query(user_id, request.story_text, "categorize", 1)
-    
     return classification
 
 
 # File Upload Endpoint
 @app.post("/api/upload-file")
-async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def upload_file(request: Request, file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
     """Upload and extract text from file (PDF, DOCX, TXT, or Images)"""
-    import tempfile
-    import os
     from pathlib import Path
     
     # Validate file type
@@ -688,7 +762,7 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
     
     if file_ext not in allowed_extensions:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File type not supported. Allowed types: PDF, DOCX, TXT, JPG, PNG"
         )
     
@@ -696,11 +770,16 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
     file_type = file_ext[1:] if file_ext else "unknown"
     
     try:
-        # Read file content
         contents = await file.read()
         
+        # Check file size
+        if len(contents) > settings.MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE / 1024 / 1024}MB"
+            )
+        
         if file_ext == '.pdf':
-            # Extract text from PDF
             import PyPDF2
             from io import BytesIO
             pdf_file = BytesIO(contents)
@@ -708,7 +787,6 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
             extracted_text = "\n".join([page.extract_text() for page in pdf_reader.pages])
             
         elif file_ext == '.docx':
-            # Extract text from DOCX
             from docx import Document
             from io import BytesIO
             docx_file = BytesIO(contents)
@@ -716,25 +794,19 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
             extracted_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
             
         elif file_ext == '.txt':
-            # Extract text from TXT
             extracted_text = contents.decode('utf-8', errors='ignore')
             
         elif file_ext in {'.jpg', '.jpeg', '.png'}:
-            # For images, we'll use Google Vision API or return a message
-            # For now, return a message that image analysis is not yet implemented
-            # In the future, could use Google Vision API to extract text from images
             extracted_text = f"[Image file: {file.filename}] Image analysis not yet implemented. Please provide a text description."
         
-        # Clean extracted text
         extracted_text = extracted_text.strip()
         
         if not extracted_text:
             raise HTTPException(
-                status_code=400,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No text could be extracted from the file. Please ensure the file contains readable text."
             )
         
-        # Limit text length (first 5000 characters for prompt)
         if len(extracted_text) > 5000:
             extracted_text = extracted_text[:5000] + "... [truncated]"
         
@@ -746,12 +818,13 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
             "message": f"File uploaded and processed successfully. Extracted {len(extracted_text)} characters."
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        error_msg = str(e)
-        print(f"File upload error: {error_msg}")
+        logger.error(f"File upload error: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=500,
-            detail=f"Error processing file: {error_msg}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing file: {str(e)}"
         )
 
 
@@ -759,9 +832,14 @@ async def upload_file(file: UploadFile = File(...), user_id: int = Depends(get_c
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "version": settings.VERSION,
+        "timestamp": datetime.now().isoformat()
+    }
 
-# Serve static files (images) - Mount AFTER API routes to avoid conflicts
+
+# Serve static files (images) - Mount AFTER API routes
 if os.path.exists("scene_images"):
     app.mount("/scene_images", StaticFiles(directory="scene_images"), name="scene_images")
 if os.path.exists("output_scenes"):
@@ -769,3 +847,6 @@ if os.path.exists("output_scenes"):
 if os.path.exists("suggestion"):
     app.mount("/suggestion", StaticFiles(directory="suggestion"), name="suggestion")
 
+# Serve frontend static files
+if os.path.exists("index.html"):
+    app.mount("/", StaticFiles(directory=".", html=True), name="static")

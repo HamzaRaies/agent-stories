@@ -29,8 +29,8 @@ window.addEventListener('unhandledrejection', (e) => {
     e.preventDefault();
 });
 
-// API Configuration
-const API_BASE_URL = 'http://localhost:8000'; // Change to your backend URL
+// API Configuration - Uses environment variable or defaults to current origin
+const API_BASE_URL = window.API_BASE_URL || (window.location.origin.includes('localhost') ? 'http://localhost:8000' : window.location.origin);
 let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let currentStoryId = null; // Track the currently loaded story

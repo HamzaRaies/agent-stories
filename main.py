@@ -2,9 +2,17 @@
 Main entry point - Run the FastAPI server
 """
 import uvicorn
+from src.config import settings
 
 if __name__ == "__main__":
-    print("Starting Story-to-Scene Generator API Server...")
-    print("API will be available at http://localhost:8000")
-    print("API docs at http://localhost:8000/docs")
-    uvicorn.run("src.api:app", host="0.0.0.0", port=8000, reload=True)
+    print(f"Starting {settings.PROJECT_NAME}...")
+    print(f"API will be available at http://{settings.HOST}:{settings.PORT}")
+    if settings.DEBUG:
+        print(f"API docs at http://{settings.HOST}:{settings.PORT}/docs")
+    uvicorn.run(
+        "src.api:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+        log_level=settings.LOG_LEVEL.lower()
+    )
