@@ -886,9 +886,15 @@ document.addEventListener('DOMContentLoaded', () => {
     init().catch(err => console.warn('Init error (non-critical):', err));
     async function loadSuggestions() {
         try {
-            const response = await fetch(`${API_BASE_URL}/suggestion/info.json`);
+            const response = await fetch(`${API_BASE_URL}/suggestion/info.json`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-cache'
+            });
             if (!response.ok) {
-                throw new Error('Failed to load suggestions');
+                console.warn(`Failed to load suggestions: ${response.status} ${response.statusText}`);
+                suggestionsList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Suggestions are temporarily unavailable. You can still create your own story!</div>';
+                return;
             }
             const suggestionsData = await response.json();
 
@@ -951,7 +957,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // Load suggestion data
-            const response = await fetch(`${API_BASE_URL}/suggestion/info.json`);
+            const response = await fetch(`${API_BASE_URL}/suggestion/info.json`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-cache'
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to load suggestion: ${response.status}`);
+            }
             const suggestionsData = await response.json();
             const suggestion = suggestionsData[suggestionId];
 
