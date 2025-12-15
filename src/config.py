@@ -72,12 +72,16 @@ class Settings(BaseSettings):
         if not v or len(v) < 32:
             # Generate a random secret key if not provided (WARNING: This will invalidate tokens on restart!)
             import secrets
-            import warnings
+            import logging
             generated_key = secrets.token_urlsafe(32)
-            warnings.warn(
-                "SECRET_KEY was auto-generated. This will invalidate all existing tokens on restart. "
-                "Set SECRET_KEY environment variable for production!",
-                UserWarning
+            logger = logging.getLogger(__name__)
+            logger.error(
+                "=" * 80 + "\n"
+                "CRITICAL: SECRET_KEY was auto-generated!\n"
+                "This will invalidate ALL existing tokens on every restart.\n"
+                "Set SECRET_KEY environment variable in Railway to fix this!\n"
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                "=" * 80
             )
             return generated_key
         return v

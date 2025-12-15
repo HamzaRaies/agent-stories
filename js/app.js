@@ -289,33 +289,48 @@ function makeAPICall(endpoint, options = {}) {
             // Don't clear token on login/register endpoints (those are expected to fail)
             const isAuthEndpoint = endpoint.includes('/auth/login') || endpoint.includes('/auth/register');
             
-            // Clear invalid/expired token (but not on auth endpoints)
-            if (authToken && !isAuthEndpoint) {
-                console.warn('Authentication failed - clearing token');
-                authToken = null;
-                currentUser = null;
-                localStorage.removeItem('authToken');
-                localStorage.removeItem('currentUser');
-                updateUIForAuthState(false);
-                
-                // Show login modal if not already shown and not a public endpoint
-                if (!options.skipAuth) {
-                    const loginModal = document.getElementById('login-modal');
-                    if (loginModal && !loginModal.classList.contains('active')) {
-                        loginModal.classList.add('active');
-                        showToast('Your session expired. Please log in again.', 'info', 3000);
+            // Parse error message first (before clearing token)
+            let errorMessage = 'Authentication required. Please log in.';
+            if (hasJsonContent) {
+                try {
+                    const errorData = await response.clone().json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (e) {
+                    // If JSON parse fails, try text
+                    try {
+                        const errorText = await response.clone().text();
+                        if (errorText) errorMessage = errorText;
+                    } catch (e2) {
+                        // Ignore parse errors
                     }
                 }
             }
             
-            // Try to parse error message
-            let errorMessage = 'Authentication required. Please log in.';
-            if (hasJsonContent) {
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.detail || errorMessage;
-                } catch (e) {
-                    // Ignore JSON parse errors
+            // Clear invalid/expired token (but not on auth endpoints)
+            if (authToken && !isAuthEndpoint) {
+                // Check if it's a token-related error (not just wrong password)
+                const isTokenError = errorMessage.toLowerCase().includes('token') || 
+                                    errorMessage.toLowerCase().includes('expired') || 
+                                    errorMessage.toLowerCase().includes('invalid') && 
+                                    !errorMessage.toLowerCase().includes('password') &&
+                                    !errorMessage.toLowerCase().includes('email');
+                
+                if (isTokenError) {
+                    console.warn('Authentication failed - clearing invalid token:', errorMessage);
+                    authToken = null;
+                    currentUser = null;
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('currentUser');
+                    updateUIForAuthState(false);
+                    
+                    // Show login modal if not already shown and not a public endpoint
+                    if (!options.skipAuth) {
+                        const loginModal = document.getElementById('login-modal');
+                        if (loginModal && !loginModal.classList.contains('active')) {
+                            loginModal.classList.add('active');
+                            showToast('Your session expired. Please log in again.', 'info', 3000);
+                        }
+                    }
                 }
             }
             

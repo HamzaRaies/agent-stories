@@ -867,28 +867,47 @@ if os.path.exists("output_scenes") or (BASE_DIR / "output_scenes").exists():
     app.mount("/output_scenes", StaticFiles(directory=output_scenes_path), name="output_scenes")
     logger.info(f"Mounted output_scenes at: {output_scenes_path}")
 
-if os.path.exists("suggestion") or (BASE_DIR / "suggestion").exists():
-    suggestion_path = "suggestion" if os.path.exists("suggestion") else str(BASE_DIR / "suggestion")
-    # Use absolute path
-    suggestion_abs_path = os.path.abspath(suggestion_path)
-    app.mount("/suggestion", StaticFiles(directory=suggestion_abs_path), name="suggestion")
-    logger.info(f"Mounted suggestion directory at: {suggestion_abs_path}")
+# Find suggestion directory - check multiple possible locations
+suggestion_paths = [
+    "suggestion",  # Current directory
+    str(BASE_DIR / "suggestion"),  # Project root
+    "/app/suggestion",  # Railway absolute path
+    str(Path("/app") / "suggestion"),  # Railway with Path
+]
+
+suggestion_found = None
+for path in suggestion_paths:
+    if os.path.exists(path) and os.path.isdir(path):
+        info_json = os.path.join(path, "info.json")
+        if os.path.exists(info_json):
+            suggestion_found = os.path.abspath(path)
+            logger.info(f"Found suggestion directory at: {suggestion_found}")
+            break
+
+if suggestion_found:
+    app.mount("/suggestion", StaticFiles(directory=suggestion_found), name="suggestion")
+    logger.info(f"Mounted suggestion directory at: {suggestion_found}")
     # Verify info.json exists
-    info_json_path = os.path.join(suggestion_abs_path, "info.json")
+    info_json_path = os.path.join(suggestion_found, "info.json")
     if os.path.exists(info_json_path):
         logger.info(f"Found info.json at: {info_json_path}")
         # List files in suggestion directory for debugging
         try:
-            files = os.listdir(suggestion_abs_path)
-            logger.info(f"Suggestion directory contains {len(files)} files")
+            files = os.listdir(suggestion_found)
+            logger.info(f"Suggestion directory contains {len(files)} files: {', '.join(files[:10])}")
         except Exception as e:
             logger.warning(f"Could not list suggestion directory: {e}")
     else:
-        logger.warning(f"info.json not found at: {info_json_path}")
-        # Try to find it
-        for root, dirs, files in os.walk(BASE_DIR):
-            if "info.json" in files:
-                logger.info(f"Found info.json at: {os.path.join(root, 'info.json')}")
+        logger.error(f"info.json not found at: {info_json_path} even though directory exists!")
+else:
+    logger.warning("Suggestion directory not found in any expected location")
+    # Try to find it anywhere
+    for root, dirs, files in os.walk(BASE_DIR):
+        if "info.json" in files and "suggestion" in root:
+            found_path = os.path.dirname(os.path.join(root, "info.json"))
+            logger.info(f"Found suggestion directory at: {found_path}")
+            app.mount("/suggestion", StaticFiles(directory=found_path), name="suggestion")
+            break
 
 # Serve frontend static files
 if os.path.exists("index.html") or (BASE_DIR / "index.html").exists():
