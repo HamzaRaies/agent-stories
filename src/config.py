@@ -70,9 +70,16 @@ class Settings(BaseSettings):
     @validator("SECRET_KEY", pre=True, always=True)
     def validate_secret_key(cls, v):
         if not v or len(v) < 32:
-            # Generate a random secret key if not provided
+            # Generate a random secret key if not provided (WARNING: This will invalidate tokens on restart!)
             import secrets
-            return secrets.token_urlsafe(32)
+            import warnings
+            generated_key = secrets.token_urlsafe(32)
+            warnings.warn(
+                "SECRET_KEY was auto-generated. This will invalidate all existing tokens on restart. "
+                "Set SECRET_KEY environment variable for production!",
+                UserWarning
+            )
+            return generated_key
         return v
     
     class Config:

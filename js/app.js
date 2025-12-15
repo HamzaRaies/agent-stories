@@ -286,8 +286,11 @@ function makeAPICall(endpoint, options = {}) {
 
         // Handle 401 Unauthorized - clear invalid token and prompt login
         if (response.status === 401) {
-            // Clear invalid/expired token
-            if (authToken) {
+            // Don't clear token on login/register endpoints (those are expected to fail)
+            const isAuthEndpoint = endpoint.includes('/auth/login') || endpoint.includes('/auth/register');
+            
+            // Clear invalid/expired token (but not on auth endpoints)
+            if (authToken && !isAuthEndpoint) {
                 console.warn('Authentication failed - clearing token');
                 authToken = null;
                 currentUser = null;
@@ -300,7 +303,7 @@ function makeAPICall(endpoint, options = {}) {
                     const loginModal = document.getElementById('login-modal');
                     if (loginModal && !loginModal.classList.contains('active')) {
                         loginModal.classList.add('active');
-                        showToast('Please log in to continue', 'info', 3000);
+                        showToast('Your session expired. Please log in again.', 'info', 3000);
                     }
                 }
             }

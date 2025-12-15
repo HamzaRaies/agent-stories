@@ -869,14 +869,26 @@ if os.path.exists("output_scenes") or (BASE_DIR / "output_scenes").exists():
 
 if os.path.exists("suggestion") or (BASE_DIR / "suggestion").exists():
     suggestion_path = "suggestion" if os.path.exists("suggestion") else str(BASE_DIR / "suggestion")
-    app.mount("/suggestion", StaticFiles(directory=suggestion_path), name="suggestion")
-    logger.info(f"Mounted suggestion directory at: {suggestion_path}")
+    # Use absolute path
+    suggestion_abs_path = os.path.abspath(suggestion_path)
+    app.mount("/suggestion", StaticFiles(directory=suggestion_abs_path), name="suggestion")
+    logger.info(f"Mounted suggestion directory at: {suggestion_abs_path}")
     # Verify info.json exists
-    info_json_path = os.path.join(suggestion_path, "info.json")
+    info_json_path = os.path.join(suggestion_abs_path, "info.json")
     if os.path.exists(info_json_path):
         logger.info(f"Found info.json at: {info_json_path}")
+        # List files in suggestion directory for debugging
+        try:
+            files = os.listdir(suggestion_abs_path)
+            logger.info(f"Suggestion directory contains {len(files)} files")
+        except Exception as e:
+            logger.warning(f"Could not list suggestion directory: {e}")
     else:
         logger.warning(f"info.json not found at: {info_json_path}")
+        # Try to find it
+        for root, dirs, files in os.walk(BASE_DIR):
+            if "info.json" in files:
+                logger.info(f"Found info.json at: {os.path.join(root, 'info.json')}")
 
 # Serve frontend static files
 if os.path.exists("index.html") or (BASE_DIR / "index.html").exists():

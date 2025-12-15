@@ -4,8 +4,34 @@ Database Operations using SQLAlchemy
 import sqlite3
 import os
 from typing import Optional, List, Dict
+from pathlib import Path
 
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'database', 'story_scenes.db')
+# Use absolute path and ensure database directory exists
+BASE_DIR = Path(__file__).parent.parent
+
+# Try to get database path from config, otherwise use default
+try:
+    from src.config import settings
+    if settings.DATABASE_URL and settings.DATABASE_URL.startswith("sqlite"):
+        # Extract path from sqlite:///path/to/db.db
+        db_path = settings.DATABASE_URL.replace("sqlite:///", "").replace("sqlite://", "")
+        if db_path and not db_path.startswith(":memory:"):
+            DATABASE_PATH = db_path
+        else:
+            # Use default path
+            DATABASE_DIR = BASE_DIR / "database"
+            DATABASE_DIR.mkdir(exist_ok=True)
+            DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
+    else:
+        # Use default path
+        DATABASE_DIR = BASE_DIR / "database"
+        DATABASE_DIR.mkdir(exist_ok=True)
+        DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
+except ImportError:
+    # Fallback if config not available
+    DATABASE_DIR = BASE_DIR / "database"
+    DATABASE_DIR.mkdir(exist_ok=True)
+    DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
 
 
 def get_db_connection():
