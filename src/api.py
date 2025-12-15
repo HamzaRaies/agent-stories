@@ -416,14 +416,27 @@ async def generate_images(request: Request, story_id: int, user_id: int = Depend
                 
             except Exception as scene_error:
                 error_msg = str(scene_error)
-                logger.warning(f"Error generating image for scene {scene['scene_number']}: {error_msg}")
+                import traceback
+                error_traceback = traceback.format_exc()
+                logger.error(f"Error generating image for scene {scene['scene_number']}: {error_msg}")
+                logger.debug(f"Full traceback: {error_traceback}")
                 
-                if any(keyword in error_msg.lower() for keyword in ["429", "rate limit", "throttled", "quota"]):
+                # Check for specific error types
+                error_lower = error_msg.lower()
+                if any(keyword in error_lower for keyword in ["429", "rate limit", "throttled", "quota", "resourceexhausted"]):
                     rate_limit_hit = True
+                    logger.warning("Rate limit detected - stopping image generation")
                     break
-                else:
+                elif "timeout" in error_lower:
+                    logger.warning(f"Timeout generating image for scene {scene['scene_number']}")
                     failed_scenes.append(scene["scene_number"])
-                    continue
+                elif "no image returned" in error_lower or "runtimeerror" in error_lower:
+                    logger.warning(f"API returned no image for scene {scene['scene_number']}")
+                    failed_scenes.append(scene["scene_number"])
+                else:
+                    logger.warning(f"Unknown error for scene {scene['scene_number']}: {error_msg}")
+                    failed_scenes.append(scene["scene_number"])
+                continue
         
         if rate_limit_hit:
             return {
@@ -840,13 +853,33 @@ async def health_check():
 
 
 # Serve static files (images) - Mount AFTER API routes
-if os.path.exists("scene_images"):
-    app.mount("/scene_images", StaticFiles(directory="scene_images"), name="scene_images")
-if os.path.exists("output_scenes"):
-    app.mount("/output_scenes", StaticFiles(directory="output_scenes"), name="output_scenes")
-if os.path.exists("suggestion"):
-    app.mount("/suggestion", StaticFiles(directory="suggestion"), name="suggestion")
+# Use absolute paths to ensure files are found in production
+import pathlib
+BASE_DIR = pathlib.Path(__file__).parent.parent
+
+if os.path.exists("scene_images") or (BASE_DIR / "scene_images").exists():
+    scene_images_path = "scene_images" if os.path.exists("scene_images") else str(BASE_DIR / "scene_images")
+    app.mount("/scene_images", StaticFiles(directory=scene_images_path), name="scene_images")
+    logger.info(f"Mounted scene_images at: {scene_images_path}")
+
+if os.path.exists("output_scenes") or (BASE_DIR / "output_scenes").exists():
+    output_scenes_path = "output_scenes" if os.path.exists("output_scenes") else str(BASE_DIR / "output_scenes")
+    app.mount("/output_scenes", StaticFiles(directory=output_scenes_path), name="output_scenes")
+    logger.info(f"Mounted output_scenes at: {output_scenes_path}")
+
+if os.path.exists("suggestion") or (BASE_DIR / "suggestion").exists():
+    suggestion_path = "suggestion" if os.path.exists("suggestion") else str(BASE_DIR / "suggestion")
+    app.mount("/suggestion", StaticFiles(directory=suggestion_path), name="suggestion")
+    logger.info(f"Mounted suggestion directory at: {suggestion_path}")
+    # Verify info.json exists
+    info_json_path = os.path.join(suggestion_path, "info.json")
+    if os.path.exists(info_json_path):
+        logger.info(f"Found info.json at: {info_json_path}")
+    else:
+        logger.warning(f"info.json not found at: {info_json_path}")
 
 # Serve frontend static files
-if os.path.exists("index.html"):
-    app.mount("/", StaticFiles(directory=".", html=True), name="static")
+if os.path.exists("index.html") or (BASE_DIR / "index.html").exists():
+    static_path = "." if os.path.exists("index.html") else str(BASE_DIR)
+    app.mount("/", StaticFiles(directory=static_path, html=True), name="static")
+    logger.info(f"Mounted static files at: {static_path}")
