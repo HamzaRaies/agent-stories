@@ -73,16 +73,26 @@ class Settings(BaseSettings):
             # Generate a random secret key if not provided (WARNING: This will invalidate tokens on restart!)
             import secrets
             import logging
+            import sys
+            
             generated_key = secrets.token_urlsafe(32)
-            logger = logging.getLogger(__name__)
-            logger.error(
-                "=" * 80 + "\n"
-                "CRITICAL: SECRET_KEY was auto-generated!\n"
-                "This will invalidate ALL existing tokens on every restart.\n"
-                "Set SECRET_KEY environment variable in Railway to fix this!\n"
-                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
-                "=" * 80
-            )
+            
+            # Only log warning once per process (use a module-level flag)
+            if not hasattr(validate_secret_key, '_warned'):
+                logger = logging.getLogger(__name__)
+                # Log to stderr so it's visible in Railway logs
+                warning_msg = (
+                    "\n" + "=" * 80 + "\n"
+                    "⚠️  CRITICAL: SECRET_KEY was auto-generated!\n"
+                    "⚠️  This will invalidate ALL existing tokens on every restart.\n"
+                    "⚠️  Set SECRET_KEY environment variable in Railway to fix this!\n"
+                    "⚠️  Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                    "=" * 80 + "\n"
+                )
+                logger.error(warning_msg)
+                print(warning_msg, file=sys.stderr)
+                validate_secret_key._warned = True
+            
             return generated_key
         return v
     
