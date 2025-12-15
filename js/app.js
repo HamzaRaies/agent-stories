@@ -284,6 +284,41 @@ function makeAPICall(endpoint, options = {}) {
         const contentType = response.headers.get('content-type');
         const hasJsonContent = contentType && contentType.includes('application/json');
 
+        // Handle 401 Unauthorized - clear invalid token and prompt login
+        if (response.status === 401) {
+            // Clear invalid/expired token
+            if (authToken) {
+                console.warn('Authentication failed - clearing token');
+                authToken = null;
+                currentUser = null;
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('currentUser');
+                updateUIForAuthState(false);
+                
+                // Show login modal if not already shown and not a public endpoint
+                if (!options.skipAuth) {
+                    const loginModal = document.getElementById('login-modal');
+                    if (loginModal && !loginModal.classList.contains('active')) {
+                        loginModal.classList.add('active');
+                        showToast('Please log in to continue', 'info', 3000);
+                    }
+                }
+            }
+            
+            // Try to parse error message
+            let errorMessage = 'Authentication required. Please log in.';
+            if (hasJsonContent) {
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (e) {
+                    // Ignore JSON parse errors
+                }
+            }
+            
+            throw new Error(errorMessage);
+        }
+
         if (!response.ok) {
             // Try to parse error message from JSON if available
             if (hasJsonContent) {
@@ -315,7 +350,23 @@ function makeAPICall(endpoint, options = {}) {
                 } else if (response.status === 404) {
                     errorMsg = 'Resource not found';
                 } else if (response.status === 401) {
-                    errorMsg = 'Unauthorized: Please login again';
+                    // Handle 401 - clear token and prompt login
+                    if (authToken) {
+                        authToken = null;
+                        currentUser = null;
+                        localStorage.removeItem('authToken');
+                        localStorage.removeItem('currentUser');
+                        updateUIForAuthState(false);
+                        
+                        if (!options.skipAuth) {
+                            const loginModal = document.getElementById('login-modal');
+                            if (loginModal && !loginModal.classList.contains('active')) {
+                                loginModal.classList.add('active');
+                                showToast('Please log in to continue', 'info', 3000);
+                            }
+                        }
+                    }
+                    errorMsg = 'Authentication required. Please log in.';
                 } else if (response.status === 403) {
                     errorMsg = 'Forbidden: You do not have permission to perform this action';
                 }
