@@ -5,8 +5,8 @@ python-multipart==0.0.6
 gunicorn==21.2.0
 
 # LangChain and LLM
-langchain==0.1.0
-langchain-google-genai==0.0.6
+langchain>=0.1.0,<0.3.0
+langchain-google-genai>=0.0.6
 
 # Database
 sqlalchemy==2.0.23
