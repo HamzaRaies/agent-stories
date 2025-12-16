@@ -1,6 +1,7 @@
 import os
 import threading
 import queue
+import logging
 from typing import List, Dict, Union
 from io import BytesIO
 
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 from PIL import Image
 from google import genai
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -147,14 +150,44 @@ class ImageGenerator:
 
         pil_image = None
 
+        # Check if response has parts and it's not None
+        if response.parts is None:
+            # Log response details for debugging
+            finish_reason = getattr(response, 'finish_reason', None)
+            candidates = getattr(response, 'candidates', None)
+            logger.error(f"API response has no parts. finish_reason={finish_reason}, candidates={candidates}")
+            raise RuntimeError(f"API response has no parts (finish_reason: {finish_reason})")
+        
+        # Check if parts is iterable and not empty
+        if not response.parts:
+            finish_reason = getattr(response, 'finish_reason', None)
+            logger.warning(f"API response returned empty parts list (finish_reason: {finish_reason})")
+            raise RuntimeError(f"API response returned empty parts list (finish_reason: {finish_reason})")
+
+        # Iterate through parts to find image data
+        parts_checked = 0
         for part in response.parts:
-            if part.inline_data:
+            parts_checked += 1
+            if part and hasattr(part, 'inline_data') and part.inline_data:
                 img_bytes = part.inline_data.data
-                pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
-                break
+                if img_bytes:
+                    pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
+                    logger.debug(f"Successfully extracted image from part {parts_checked}")
+                    break
 
         if pil_image is None:
-            raise RuntimeError("No image returned")
+            # Log more details about the response for debugging
+            finish_reason = getattr(response, 'finish_reason', None)
+            candidates = getattr(response, 'candidates', None)
+            parts_count = len(response.parts) if response.parts else 0
+            logger.error(
+                f"No image found in response. "
+                f"parts_count={parts_count}, "
+                f"finish_reason={finish_reason}, "
+                f"candidates={candidates}"
+            )
+            error_msg = f"No image returned from API (checked {parts_count} parts, finish_reason: {finish_reason})"
+            raise RuntimeError(error_msg)
 
         pil_image.save(file_path)
         self.previous_image = pil_image
