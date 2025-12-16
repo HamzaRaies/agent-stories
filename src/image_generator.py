@@ -149,6 +149,7 @@ class ImageGenerator:
         response = result_q.get()
 
         pil_image = None
+        img_bytes = None
 
         # Try different response structures based on API version
         # The API structure changed - response might have candidates[0].content.parts
@@ -162,14 +163,12 @@ class ImageGenerator:
                         for part in content.parts:
                             if hasattr(part, 'inline_data') and part.inline_data:
                                 img_bytes = part.inline_data.data
-                                pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
                                 break
             # Method 2: Direct parts access (old API)
             elif hasattr(response, 'parts'):
                 for part in response.parts:
                     if hasattr(part, 'inline_data') and part.inline_data:
                         img_bytes = part.inline_data.data
-                        pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
                         break
         except (AttributeError, IndexError, KeyError) as e:
             # Debug: print response structure for troubleshooting
@@ -181,8 +180,36 @@ class ImageGenerator:
                     print(f"DEBUG: First candidate dir: {[attr for attr in dir(response.candidates[0]) if not attr.startswith('_')]}")
             raise RuntimeError(f"Could not extract image from response structure: {e}. Response type: {type(response)}")
 
-        if pil_image is None:
+        if img_bytes is None:
             raise RuntimeError("No image returned - could not find image data in response")
+        
+        # Convert image bytes to PIL Image
+        # Handle different data formats
+        try:
+            # If img_bytes is already bytes, use it directly
+            if isinstance(img_bytes, bytes):
+                buffer = BytesIO(img_bytes)
+            # If it's a BytesIO object, get the value
+            elif hasattr(img_bytes, 'read'):
+                buffer = BytesIO(img_bytes.read())
+                buffer.seek(0)  # Reset to beginning
+            # If it's a string (base64), decode it
+            elif isinstance(img_bytes, str):
+                import base64
+                buffer = BytesIO(base64.b64decode(img_bytes))
+            else:
+                # Try to convert to bytes
+                buffer = BytesIO(bytes(img_bytes))
+            
+            # Open image from buffer
+            pil_image = Image.open(buffer).convert("RGB")
+            buffer.close()
+        except Exception as e:
+            print(f"DEBUG: Image data type: {type(img_bytes)}")
+            print(f"DEBUG: Image data length: {len(img_bytes) if hasattr(img_bytes, '__len__') else 'N/A'}")
+            if isinstance(img_bytes, bytes):
+                print(f"DEBUG: First 100 bytes: {img_bytes[:100]}")
+            raise RuntimeError(f"Could not open image from data: {e}")
 
         pil_image.save(file_path)
         self.previous_image = pil_image
