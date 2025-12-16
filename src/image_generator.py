@@ -17,8 +17,7 @@ genai_client = genai.Client(api_key=google_api_key)
 
 OUTPUT_DIR = "scene_images"
 IMAGE_EXT = "png"
-# Ensure you are using a model that supports image generation via generate_content
-IMAGE_GENERATION_MODEL = "gemini-2.0-flash-exp" 
+IMAGE_GENERATION_MODEL = "gemini-2.5-flash-image"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -71,9 +70,7 @@ class ImageGenerator:
                 "Characters, faces, clothing, lighting, and environment must remain consistent."
             )
 
-        # Append Aspect Ratio to prompt to ensure it works even if config is ignored
-        full_prompt = f"{self._get_style_prompt()}\n{prompt}\nAspect Ratio: {self.aspect_ratio}"
-        contents.append(full_prompt)
+        contents.append(f"{self._get_style_prompt()}\n{prompt}")
 
         scene_number = scene.get("scene_number", 1)
         filename = (
@@ -91,13 +88,10 @@ class ImageGenerator:
 
         def worker():
             try:
-                # --- FIX APPLIED HERE ---
-                # Replaced types.GenerateContentConfig(...) with a simple dictionary.
-                # This bypasses the missing 'ImageConfig' class error.
-                config = {
-                    "response_modalities": ["IMAGE"],
-                    # Optional: generation_config can be added here if the model requires specific params
-                }
+                config = types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
+                )
 
                 response = genai_client.models.generate_content(
                     model=IMAGE_GENERATION_MODEL,
@@ -122,21 +116,14 @@ class ImageGenerator:
 
         pil_image = None
 
-        # Check if parts exist
-        if not response.parts:
-             raise RuntimeError("API returned no content parts. The model may have refused the prompt.")
-
         for part in response.parts:
-            # Inline data handling
             if part.inline_data:
                 img_bytes = part.inline_data.data
                 pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
                 break
-            # Executable code handling (sometimes images come as URLs/Files in other attributes)
-            # but for this specific call, inline_data is standard.
 
         if pil_image is None:
-            raise RuntimeError("No image data found in response parts.")
+            raise RuntimeError("No image returned")
 
         pil_image.save(file_path)
         self.previous_image = pil_image
