@@ -90,6 +90,7 @@ class ImageGenerator:
             try:
                 config = types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
                 )
 
                 response = genai_client.models.generate_content(
@@ -129,16 +130,7 @@ class ImageGenerator:
 
         pil_image = None
 
-        # Handle different response structures across SDK versions
-        parts = []
-        if hasattr(response, "parts"):
-            parts = response.parts
-        elif hasattr(response, "candidates") and response.candidates:
-            parts = response.candidates[0].content.parts
-
-        pil_image = None
-
-        for part in parts:
+        for part in response.parts:
             if part.inline_data:
                 img_bytes = part.inline_data.data
                 pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
