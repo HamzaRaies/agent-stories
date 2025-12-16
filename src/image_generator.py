@@ -88,10 +88,20 @@ class ImageGenerator:
 
         def worker():
             try:
-                config = types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
-                )
+                # Try new API first (with ImageConfig)
+                try:
+                    config = types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
+                    )
+                except AttributeError:
+                    # Fallback for older API versions - use dict instead
+                    config = types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    )
+                    # Set aspect ratio in config dict if supported
+                    if hasattr(config, 'image_config'):
+                        config.image_config = {"aspect_ratio": self.aspect_ratio}
 
                 response = genai_client.models.generate_content(
                     model=IMAGE_GENERATION_MODEL,
@@ -100,7 +110,13 @@ class ImageGenerator:
                 )
                 result_q.put(response)
             except Exception as e:
-                error_q.put(e)
+                import traceback
+                error_details = {
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
+                }
+                error_q.put((e, error_details))
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -110,7 +126,14 @@ class ImageGenerator:
             raise TimeoutError("Image generation timeout")
 
         if not error_q.empty():
-            raise error_q.get()
+            error_data = error_q.get()
+            if isinstance(error_data, tuple):
+                error, error_details = error_data
+                print(f"Image generation error: {error_details['error']}")
+                print(f"Error type: {error_details['error_type']}")
+                raise error
+            else:
+                raise error_data
 
         response = result_q.get()
 
