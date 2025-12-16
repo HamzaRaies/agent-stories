@@ -23,6 +23,8 @@ database/*.db
 output_scenes/
 scene_images/
 *.json
+# But allow suggestion/info.json (it's needed for the app)
+!suggestion/info.json
 
 # IDE
 .vscode/

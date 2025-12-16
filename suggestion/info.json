@@ -1,0 +1,125 @@
+{
+  "1": {
+    "genre": "Drama",
+    "style": "Cinematic",
+    "title": "The Wind's Answer",
+    "scenes": [
+        {
+            "id": "1",
+            "text": "The boy stands on the rooftop of his coastal house, holding a paper glider. The persistent wind tests its wings, bringing back fragmented memories of a forgotten laugh and a figure who leaned into the wind.",
+            "url": "/suggestion/scene0_1.png"
+        },
+        {
+            "id": "2",
+            "text": "Below, the coastal town continues its quiet routines: fishermen mend nets, windmills creak, and waves press against the shore. The boy, however, remains on his rooftop, day after day, releasing gliders that rise and fall like unsettled thoughts.",
+            "url": "/suggestion/scene0_2.png"
+        },
+        {
+            "id": "3",
+            "text": "On his final morning, the wind grows unusually strong. The glider tears at one edge but, defying expectation, soars higher than any before it. The boy races down through the winding streets, chasing the white flicker against the blue sky.",
+            "url": "/suggestion/scene0_3.png"
+        },
+        {
+            "id": "4",
+            "text": "He reaches the cliffs where the land gives way to air. There, the wind catches the glider fully, carrying it out over the vast sea until it dissolves into the distant horizon. For the first time, the boy feels not loss, but a profound sense of having been answered.",
+            "url": "/suggestion/scene0_4.png"
+        },
+        {
+            "id": "5",
+            "text": "Turning away from the ocean, the boy shoulders his bag and walks toward the road leading out of town. Behind him, the wind continues to move, not to hold him, but to remember him.",
+            "url": "/suggestion/scene0_5.png"
+        }
+    ]
+  },
+  "2": {
+    "genre": "Thriller",
+    "style": "Noir",
+    "title": "Ordinary Disappearance",
+    "scenes": [
+        {
+            "id": "1",
+            "text": "He wakes on the floor, disoriented, with a nosebleed. His phone buzzes relentlessly with missed calls, a stark contrast to the slow-turning fan above, as the city outside begins its day.",
+            "url": "/suggestion/scene1_1.png"
+        },
+        {
+            "id": "2",
+            "text": "After the phone falls silent, he washes his face, seeing his ordinary reflection. Stepping outside, he spots a menacing black car across the street, confirming his dread and the weight of last night's decision.",
+            "url": "/suggestion/scene1_2.png"
+        },
+        {
+            "id": "3",
+            "text": "He walks, the black car following at a distance, grappling with his choices. He reaches the river, where he briefly considers escape before taking out his phone and deleting the missed calls, a quiet act of resignation.",
+            "url": "/suggestion/scene1_3.png"
+        },
+        {
+            "id": "4",
+            "text": "The car door opens behind him, and footsteps approach. He doesn't turn, uttering 'I'm ready,' accepting his fate as the city and river continue on, oblivious to his pivotal moment.",
+            "url": "/suggestion/scene1_4.png"
+        }
+    ]
+  },
+  "3": {
+    "genre": "Fantasy",
+    "style": "Anime",
+    "title": "When the City Whispered",
+    "scenes": [
+        {
+            "id": "1",
+            "text": "At precisely 6:17 a.m., the city falls silent. Traffic lights change and elevators move without their usual hum. Mariam discovers the profound change in her kitchen when her kettle fails to whistle, realizing an essential auditory presence has vanished.",
+            "url": "/suggestion/scene2_1.png"
+        },
+        {
+            "id": "2",
+            "text": "Confusion spreads through the city as people test sounds – clapping, snapping, horns – all functional but quiet. Officials issue statements on television, their voices lacking echo. Mariam, an archivist, finds solace in the municipal records office, where she begins to perceive a faint, non-auditory 'rustling'.",
+            "url": "/suggestion/scene2_2.png"
+        },
+        {
+            "id": "3",
+            "text": "Mariam realizes the archive documents are whispering not audibly, but in meaning. As she runs her fingers along their spines, stories of past zoning disputes, parental fears from birth records, and forgotten rivers from faded maps surface uninvited, revealing the city has withdrawn its voice into memory.",
+            "url": "/suggestion/scene2_3.png"
+        },
+        {
+            "id": "4",
+            "text": "Understanding the city's new language, Mariam opens the archive to the public that evening. Initially skeptical, people gradually sit down, touch the documents, and read slowly. The room fills, not with sound, but with a profound, shared attention, as the city's silent stories begin to be heard.",
+            "url": "/suggestion/scene2_4.png"
+        },
+        {
+            "id": "5",
+            "text": "Weeks pass with the city remaining quiet, yet people's behavior changes, becoming more mindful. Then, at 6:17 a.m., the kettle in Mariam's kitchen whistles, signaling the city's decision to speak again, but only to those who had learned how to truly listen.",
+            "url": "/suggestion/scene2_5.png"
+        }
+    ]
+  },
+  "4": {
+    "genre": "Fantasy",
+    "style": "WaterColor",
+    "title": "Star Forge Awakens",
+    "scenes": [
+        {
+            "id": "1",
+            "text": "Wrapped in furs, the wizard Elara traces the final inscription on a shimmering celestial map, which then glows and projects a blue line directly north toward Mount Glacius.",
+            "url": "/suggestion/scene3_1.png"
+        },
+        {
+            "id": "2",
+            "text": "Days later, struggling through a blinding blizzard near Mount Glacius, Elara stumbles upon a massive, frozen waterfall concealing a cavern entrance marked by crystalline spires.",
+            "url": "/suggestion/scene3_2.png"
+        },
+        {
+            "id": "3",
+            "text": "Inside, Elara navigates silent, glowing ice tunnels, which lead her to a chamber containing an enormous, clear crystal pulsating with a pale violet light.",
+            "url": "/suggestion/scene3_3.png"
+        },
+        {
+            "id": "4",
+            "text": "The moment Elara touches the crystal, the ice gives way, and she slides down a polished chute into a warm, subterranean vault filled with the hum of derelict machinery, where she beholds the dormant Star Forge.",
+            "url": "/suggestion/scene3_4.png"
+        },
+        {
+            "id": "5",
+            "text": "Realizing its dormant state, Elara channels a stream of starlight from her celestial map into the anvil, causing the Star Forge to roar to life with intense, brilliant white light.",
+            "url": "/suggestion/scene3_5.png"
+        }
+    ]
+  }  
+}
