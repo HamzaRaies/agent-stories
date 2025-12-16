@@ -90,8 +90,6 @@ class ImageGenerator:
             try:
                 config = types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
-                    # Use dictionary for compatibility across SDK versions
-                    image_config={"aspect_ratio": self.aspect_ratio},
                 )
 
                 response = genai_client.models.generate_content(
