@@ -82,67 +82,67 @@ class ImageGenerator:
 
         return self._generate_image(contents, file_path)
 
-def _generate_image(self, contents, file_path) -> str:
-    result_q = queue.Queue()
-    error_q = queue.Queue()
+    def _generate_image(self, contents, file_path) -> str:
+        result_q = queue.Queue()
+        error_q = queue.Queue()
 
-    def worker():
-        try:
-            # Combine text parts into a single prompt
-            prompt_parts = []
-            reference_images = []
+        def worker():
+            try:
+                # Combine text parts into a single prompt
+                prompt_parts = []
+                reference_images = []
 
-            for item in contents:
-                if isinstance(item, str):
-                    prompt_parts.append(item)
-                elif isinstance(item, types.Part) and item.inline_data:
-                    reference_images.append(item.inline_data.data)
+                for item in contents:
+                    if isinstance(item, str):
+                        prompt_parts.append(item)
+                    elif isinstance(item, types.Part) and item.inline_data:
+                        reference_images.append(item.inline_data.data)
 
-            prompt_text = "\n".join(prompt_parts)
+                prompt_text = "\n".join(prompt_parts)
 
-            response = genai_client.images.generate(
-                model=IMAGE_GENERATION_MODEL,
-                prompt=prompt_text,
-                reference_images=reference_images if reference_images else None,
-                generation_config={
-                    "aspect_ratio": self.aspect_ratio,  # "3:4"
-                },
-            )
+                response = genai_client.images.generate(
+                    model=IMAGE_GENERATION_MODEL,
+                    prompt=prompt_text,
+                    reference_images=reference_images if reference_images else None,
+                    generation_config={
+                        "aspect_ratio": self.aspect_ratio,  # "3:4"
+                    },
+                )
 
-            result_q.put(response)
+                result_q.put(response)
 
-        except Exception as e:
-            import traceback
-            error_q.put({
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc()
-            })
+            except Exception as e:
+                import traceback
+                error_q.put({
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "traceback": traceback.format_exc()
+                })
 
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    t.join(timeout=120)
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        t.join(timeout=120)
 
-    if t.is_alive():
-        raise TimeoutError("Image generation timeout")
+        if t.is_alive():
+            raise TimeoutError("Image generation timeout")
 
-    if not error_q.empty():
-        err = error_q.get()
-        print("Image generation error:", err["error"])
-        print("Type:", err["error_type"])
-        print("Traceback:", err["traceback"])
-        raise RuntimeError(err["error"])
+        if not error_q.empty():
+            err = error_q.get()
+            print("Image generation error:", err["error"])
+            print("Type:", err["error_type"])
+            print("Traceback:", err["traceback"])
+            raise RuntimeError(err["error"])
 
-    response = result_q.get()
+        response = result_q.get()
 
-    if not response.images:
-        raise RuntimeError("No image returned from model")
+        if not response.images:
+            raise RuntimeError("No image returned from model")
 
-    img_bytes = response.images[0].image_bytes
-    pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
+        img_bytes = response.images[0].image_bytes
+        pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
 
-    pil_image.save(file_path)
-    self.previous_image = pil_image
+        pil_image.save(file_path)
+        self.previous_image = pil_image
 
-    print(f"Saved {file_path} ({os.path.getsize(file_path)} bytes)")
-    return file_path
+        print(f"Saved {file_path} ({os.path.getsize(file_path)} bytes)")
+        return file_path
