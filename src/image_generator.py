@@ -88,41 +88,35 @@ class ImageGenerator:
 
         def worker():
             try:
-                # Try new API first (without ImageConfig)
+                # Add aspect ratio to prompt since ImageConfig is not available
+                aspect_prompt = f"Create this image with {self.aspect_ratio} aspect ratio. "
+                
+                # Modify contents to include aspect ratio
+                modified_contents = contents.copy()
+                if modified_contents and isinstance(modified_contents[-1], str):
+                    # Add aspect ratio to the last prompt string
+                    modified_contents[-1] = aspect_prompt + modified_contents[-1]
+                else:
+                    # Insert aspect ratio as first element if no string found
+                    modified_contents.insert(0, aspect_prompt)
+                
+                # Try with GenerateContentConfig (ImageConfig removed in newer API)
                 try:
                     config = types.GenerateContentConfig(
                         response_modalities=["IMAGE"],
                     )
                     response = genai_client.models.generate_content(
                         model=IMAGE_GENERATION_MODEL,
-                        contents=contents,
+                        contents=modified_contents,
                         config=config,
                     )
-                except (AttributeError, TypeError) as e:
-                    # Fallback: try without config, or with different structure
-                    # Add aspect ratio to prompt if config doesn't support it
-                    aspect_prompt = f"Aspect ratio: {self.aspect_ratio}. "
-                    if contents and isinstance(contents[0], str):
-                        contents[0] = aspect_prompt + contents[0]
-                    elif contents:
-                        contents.insert(0, aspect_prompt)
-                    
-                    # Try with minimal config
-                    try:
-                        config = types.GenerateContentConfig(
-                            response_modalities=["IMAGE"],
-                        )
-                        response = genai_client.models.generate_content(
-                            model=IMAGE_GENERATION_MODEL,
-                            contents=contents,
-                            config=config,
-                        )
-                    except Exception:
-                        # Last resort: no config at all
-                        response = genai_client.models.generate_content(
-                            model=IMAGE_GENERATION_MODEL,
-                            contents=contents,
-                        )
+                except (AttributeError, TypeError) as config_error:
+                    # Fallback: try without config if GenerateContentConfig fails
+                    print(f"Warning: GenerateContentConfig failed, trying without config: {config_error}")
+                    response = genai_client.models.generate_content(
+                        model=IMAGE_GENERATION_MODEL,
+                        contents=modified_contents,
+                    )
                 
                 result_q.put(response)
             except Exception as e:
