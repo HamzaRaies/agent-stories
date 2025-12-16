@@ -8,36 +8,34 @@ from pathlib import Path
 
 # Use absolute path and ensure database directory exists
 BASE_DIR = Path(__file__).parent.parent
+DATABASE_DIR = BASE_DIR / "database"
+DATABASE_DIR.mkdir(exist_ok=True)
+DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
 
-# Try to get database path from config, otherwise use default
-try:
-    from src.config import settings
-    if settings.DATABASE_URL and settings.DATABASE_URL.startswith("sqlite"):
-        # Extract path from sqlite:///path/to/db.db
-        db_path = settings.DATABASE_URL.replace("sqlite:///", "").replace("sqlite://", "")
-        if db_path and not db_path.startswith(":memory:"):
-            DATABASE_PATH = db_path
-        else:
-            # Use default path
-            DATABASE_DIR = BASE_DIR / "database"
-            DATABASE_DIR.mkdir(exist_ok=True)
-            DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
-    else:
-        # Use default path
-        DATABASE_DIR = BASE_DIR / "database"
-        DATABASE_DIR.mkdir(exist_ok=True)
-        DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
-except ImportError:
-    # Fallback if config not available
-    DATABASE_DIR = BASE_DIR / "database"
-    DATABASE_DIR.mkdir(exist_ok=True)
-    DATABASE_PATH = str(DATABASE_DIR / "story_scenes.db")
+def get_database_path():
+    """Get database path from config if available, otherwise use default"""
+    try:
+        from src.config import settings
+        if settings.DATABASE_URL and settings.DATABASE_URL.startswith("sqlite"):
+            # Extract path from sqlite:///path/to/db.db
+            db_path = settings.DATABASE_URL.replace("sqlite:///", "").replace("sqlite://", "")
+            if db_path and not db_path.startswith(":memory:"):
+                # Ensure directory exists
+                db_dir = os.path.dirname(db_path) or "."
+                os.makedirs(db_dir, exist_ok=True)
+                return db_path
+    except (ImportError, AttributeError):
+        pass
+    # Use default path
+    return DATABASE_PATH
 
 
 def get_db_connection():
     """Get SQLite database connection"""
-    os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
-    conn = sqlite3.connect(DATABASE_PATH)
+    # Get database path (may be from config or default)
+    db_path = get_database_path()
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
