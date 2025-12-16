@@ -231,20 +231,20 @@ class ImageGenerator:
             else:
                 raw_bytes = bytes(img_bytes)
             
-            # Create buffer from raw bytes and validate
-            buffer = BytesIO(raw_bytes)
-            buffer.seek(0)
+            # Validate raw_bytes before creating buffer
+            if len(raw_bytes) < 10:
+                raise RuntimeError(f"Image data too short: {len(raw_bytes)} bytes")
             
-            # Verify buffer has valid image data
-            buffer.seek(0)
-            first_bytes = buffer.read(10)
-            buffer.seek(0)
-            
+            first_bytes = raw_bytes[:10]
             if not (first_bytes.startswith(b'\x89PNG') or first_bytes.startswith(b'\xff\xd8') or first_bytes.startswith(b'GIF')):
-                raise RuntimeError(f"Decoded data doesn't look like an image. First 10 bytes (hex): {first_bytes.hex()}")
+                raise RuntimeError(f"Data doesn't look like an image. First 10 bytes (hex): {first_bytes.hex()}")
             
-            # Open image from buffer (reset position again)
+            # Create fresh buffer from raw bytes for PIL
+            buffer = BytesIO(raw_bytes)
+            # PIL will read from the beginning automatically, but ensure position is 0
             buffer.seek(0)
+            
+            # Open image from buffer
             pil_image = Image.open(buffer).convert("RGB")
             buffer.close()
         except Exception as e:
