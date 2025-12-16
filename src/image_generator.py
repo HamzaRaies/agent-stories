@@ -88,16 +88,42 @@ class ImageGenerator:
 
         def worker():
             try:
-                config = types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
-                )
-
-                response = genai_client.models.generate_content(
-                    model=IMAGE_GENERATION_MODEL,
-                    contents=contents,
-                    config=config,
-                )
+                # Try new API first (without ImageConfig)
+                try:
+                    config = types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    )
+                    response = genai_client.models.generate_content(
+                        model=IMAGE_GENERATION_MODEL,
+                        contents=contents,
+                        config=config,
+                    )
+                except (AttributeError, TypeError) as e:
+                    # Fallback: try without config, or with different structure
+                    # Add aspect ratio to prompt if config doesn't support it
+                    aspect_prompt = f"Aspect ratio: {self.aspect_ratio}. "
+                    if contents and isinstance(contents[0], str):
+                        contents[0] = aspect_prompt + contents[0]
+                    elif contents:
+                        contents.insert(0, aspect_prompt)
+                    
+                    # Try with minimal config
+                    try:
+                        config = types.GenerateContentConfig(
+                            response_modalities=["IMAGE"],
+                        )
+                        response = genai_client.models.generate_content(
+                            model=IMAGE_GENERATION_MODEL,
+                            contents=contents,
+                            config=config,
+                        )
+                    except Exception:
+                        # Last resort: no config at all
+                        response = genai_client.models.generate_content(
+                            model=IMAGE_GENERATION_MODEL,
+                            contents=contents,
+                        )
+                
                 result_q.put(response)
             except Exception as e:
                 import traceback
