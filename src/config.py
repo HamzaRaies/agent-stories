@@ -84,17 +84,21 @@ class Settings(BaseSettings):
             # Only log warning once per process (use module-level flag)
             if not _secret_key_warned:
                 logger = logging.getLogger(__name__)
-                # Log to stderr so it's visible in Railway logs
+                # Log to stderr so it's visible in Railway logs - make it very clear
                 warning_msg = (
                     "\n" + "=" * 80 + "\n"
                     "⚠️  CRITICAL: SECRET_KEY was auto-generated!\n"
                     "⚠️  This will invalidate ALL existing tokens on every restart.\n"
-                    "⚠️  Set SECRET_KEY environment variable in Railway to fix this!\n"
-                    "⚠️  Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                    "⚠️  \n"
+                    "⚠️  TO FIX: Set SECRET_KEY environment variable in Railway!\n"
+                    "⚠️  Use this key: jboJMHR7-wVFMoKdjTsi2CqHr3p2c0vxu62VJDS6c7o\n"
+                    "⚠️  Or generate: python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+                    "⚠️  \n"
+                    "⚠️  See SET_SECRET_KEY_NOW.md for step-by-step instructions.\n"
                     "=" * 80 + "\n"
                 )
+                # Only log once, don't print to stderr (reduces duplication)
                 logger.error(warning_msg)
-                print(warning_msg, file=sys.stderr)
                 _secret_key_warned = True
             
             return generated_key
