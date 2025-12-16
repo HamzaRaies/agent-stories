@@ -129,7 +129,16 @@ class ImageGenerator:
 
         pil_image = None
 
-        for part in response.parts:
+        # Handle different response structures across SDK versions
+        parts = []
+        if hasattr(response, "parts"):
+            parts = response.parts
+        elif hasattr(response, "candidates") and response.candidates:
+            parts = response.candidates[0].content.parts
+
+        pil_image = None
+
+        for part in parts:
             if part.inline_data:
                 img_bytes = part.inline_data.data
                 pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
