@@ -88,36 +88,19 @@ class ImageGenerator:
 
         def worker():
             try:
-                # Combine text parts into a single prompt
-                prompt_parts = []
-                reference_images = []
-
-                for item in contents:
-                    if isinstance(item, str):
-                        prompt_parts.append(item)
-                    elif isinstance(item, types.Part) and item.inline_data:
-                        reference_images.append(item.inline_data.data)
-
-                prompt_text = "\n".join(prompt_parts)
-
-                response = genai_client.images.generate(
-                    model=IMAGE_GENERATION_MODEL,
-                    prompt=prompt_text,
-                    reference_images=reference_images if reference_images else None,
-                    generation_config={
-                        "aspect_ratio": self.aspect_ratio,  # "3:4"
-                    },
+                config = types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
                 )
 
+                response = genai_client.models.generate_content(
+                    model=IMAGE_GENERATION_MODEL,
+                    contents=contents,
+                    config=config,
+                )
                 result_q.put(response)
-
             except Exception as e:
-                import traceback
-                error_q.put({
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "traceback": traceback.format_exc()
-                })
+                error_q.put(e)
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -127,19 +110,20 @@ class ImageGenerator:
             raise TimeoutError("Image generation timeout")
 
         if not error_q.empty():
-            err = error_q.get()
-            print("Image generation error:", err["error"])
-            print("Type:", err["error_type"])
-            print("Traceback:", err["traceback"])
-            raise RuntimeError(err["error"])
+            raise error_q.get()
 
         response = result_q.get()
 
-        if not response.images:
-            raise RuntimeError("No image returned from model")
+        pil_image = None
 
-        img_bytes = response.images[0].image_bytes
-        pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
+        for part in response.parts:
+            if part.inline_data:
+                img_bytes = part.inline_data.data
+                pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
+                break
+
+        if pil_image is None:
+            raise RuntimeError("No image returned")
 
         pil_image.save(file_path)
         self.previous_image = pil_image
