@@ -872,16 +872,33 @@ suggestion_paths = [
     "suggestion",  # Current directory
     str(BASE_DIR / "suggestion"),  # Project root
     "/app/suggestion",  # Railway absolute path
+    os.path.join(os.getcwd(), "suggestion"),  # Current working directory
 ]
 
 suggestion_found = None
 for path in suggestion_paths:
-    if os.path.exists(path) and os.path.isdir(path):
-        info_json = os.path.join(path, "info.json")
+    abs_path = os.path.abspath(path) if not os.path.isabs(path) else path
+    if os.path.exists(abs_path) and os.path.isdir(abs_path):
+        info_json = os.path.join(abs_path, "info.json")
         if os.path.exists(info_json):
-            suggestion_found = os.path.abspath(path)
+            suggestion_found = abs_path
             logger.info(f"Found suggestion directory at: {suggestion_found}")
+            logger.info(f"Verified info.json exists at: {info_json}")
             break
+    else:
+        logger.debug(f"Suggestion path not found: {abs_path}")
+
+# Fallback: search for suggestion directory
+if not suggestion_found:
+    logger.warning("Suggestion directory not found in expected locations, searching...")
+    for root, dirs, files in os.walk(BASE_DIR):
+        if "suggestion" in dirs:
+            potential_path = os.path.join(root, "suggestion")
+            info_json = os.path.join(potential_path, "info.json")
+            if os.path.exists(info_json):
+                suggestion_found = os.path.abspath(potential_path)
+                logger.info(f"Found suggestion directory via search at: {suggestion_found}")
+                break
 
 if suggestion_found:
     app.mount("/suggestion", StaticFiles(directory=suggestion_found), name="suggestion")
