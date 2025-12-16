@@ -6,6 +6,9 @@ from typing import List
 from pydantic_settings import BaseSettings
 from pydantic import Field, validator
 
+# Module-level flag to track if SECRET_KEY warning has been shown
+_secret_key_warned = False
+
 
 class Settings(BaseSettings):
     """Application settings with validation"""
@@ -69,6 +72,7 @@ class Settings(BaseSettings):
     
     @validator("SECRET_KEY", pre=True, always=True)
     def validate_secret_key(cls, v):
+        global _secret_key_warned
         if not v or len(v) < 32:
             # Generate a random secret key if not provided (WARNING: This will invalidate tokens on restart!)
             import secrets
@@ -77,8 +81,8 @@ class Settings(BaseSettings):
             
             generated_key = secrets.token_urlsafe(32)
             
-            # Only log warning once per process (use a module-level flag)
-            if not hasattr(validate_secret_key, '_warned'):
+            # Only log warning once per process (use module-level flag)
+            if not _secret_key_warned:
                 logger = logging.getLogger(__name__)
                 # Log to stderr so it's visible in Railway logs
                 warning_msg = (
@@ -91,7 +95,7 @@ class Settings(BaseSettings):
                 )
                 logger.error(warning_msg)
                 print(warning_msg, file=sys.stderr)
-                validate_secret_key._warned = True
+                _secret_key_warned = True
             
             return generated_key
         return v
