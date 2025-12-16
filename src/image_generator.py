@@ -184,22 +184,56 @@ class ImageGenerator:
             raise RuntimeError("No image returned - could not find image data in response")
         
         # Convert image bytes to PIL Image
-        # Handle different data formats
+        # The data might be base64-encoded (common in API responses)
         try:
-            # If img_bytes is already bytes, use it directly
+            import base64
+            
+            # Check if data is base64-encoded by looking at first bytes
+            # PNG magic bytes: \x89PNG\r\n\x1a\n
+            # Base64 of PNG magic: iVBORw0KGgo
+            raw_bytes = None
+            
             if isinstance(img_bytes, bytes):
-                buffer = BytesIO(img_bytes)
-            # If it's a BytesIO object, get the value
-            elif hasattr(img_bytes, 'read'):
-                buffer = BytesIO(img_bytes.read())
-                buffer.seek(0)  # Reset to beginning
-            # If it's a string (base64), decode it
+                # Check if it's base64-encoded bytes (starts with b'iVBORw0KGgo' or similar)
+                if img_bytes.startswith(b'iVBORw0KGgo') or img_bytes.startswith(b'/9j/') or img_bytes.startswith(b'R0lGOD'):
+                    # It's base64-encoded, decode it
+                    try:
+                        raw_bytes = base64.b64decode(img_bytes)
+                    except Exception:
+                        # Maybe it's already raw bytes, try direct
+                        raw_bytes = img_bytes
+                else:
+                    # Try to decode as base64 first (API often returns base64)
+                    try:
+                        decoded = base64.b64decode(img_bytes)
+                        # Check if decoded data looks like an image (PNG, JPEG, etc.)
+                        if decoded.startswith(b'\x89PNG') or decoded.startswith(b'\xff\xd8') or decoded.startswith(b'GIF'):
+                            raw_bytes = decoded
+                        else:
+                            # Not base64, use original
+                            raw_bytes = img_bytes
+                    except Exception:
+                        # Not base64, use as-is
+                        raw_bytes = img_bytes
             elif isinstance(img_bytes, str):
-                import base64
-                buffer = BytesIO(base64.b64decode(img_bytes))
+                # String - definitely base64
+                raw_bytes = base64.b64decode(img_bytes)
+            elif hasattr(img_bytes, 'read'):
+                # BytesIO object
+                img_bytes.seek(0)
+                data = img_bytes.read()
+                img_bytes.seek(0)
+                # Check if it's base64
+                if isinstance(data, bytes) and (data.startswith(b'iVBORw0KGgo') or data.startswith(b'/9j/')):
+                    raw_bytes = base64.b64decode(data)
+                else:
+                    raw_bytes = data
             else:
-                # Try to convert to bytes
-                buffer = BytesIO(bytes(img_bytes))
+                raw_bytes = bytes(img_bytes)
+            
+            # Create buffer from raw bytes
+            buffer = BytesIO(raw_bytes)
+            buffer.seek(0)
             
             # Open image from buffer
             pil_image = Image.open(buffer).convert("RGB")
@@ -209,6 +243,14 @@ class ImageGenerator:
             print(f"DEBUG: Image data length: {len(img_bytes) if hasattr(img_bytes, '__len__') else 'N/A'}")
             if isinstance(img_bytes, bytes):
                 print(f"DEBUG: First 100 bytes: {img_bytes[:100]}")
+                # Try to decode as base64 and show first bytes
+                try:
+                    import base64
+                    decoded = base64.b64decode(img_bytes)
+                    print(f"DEBUG: After base64 decode, first 20 bytes: {decoded[:20]}")
+                    print(f"DEBUG: Decoded looks like PNG: {decoded.startswith(b'\\x89PNG')}")
+                except:
+                    pass
             raise RuntimeError(f"Could not open image from data: {e}")
 
         pil_image.save(file_path)
