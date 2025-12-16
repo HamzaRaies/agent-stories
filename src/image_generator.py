@@ -88,20 +88,28 @@ class ImageGenerator:
 
         def worker():
             try:
-                # Try new API first (with ImageConfig)
-                try:
+                # Check if ImageConfig exists in types
+                has_image_config = hasattr(types, 'ImageConfig')
+                
+                if has_image_config:
+                    # Use ImageConfig if available (newer API)
                     config = types.GenerateContentConfig(
                         response_modalities=["IMAGE"],
                         image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio),
                     )
-                except AttributeError:
-                    # Fallback for older API versions - use dict instead
+                else:
+                    # Fallback: Create config without ImageConfig (older API or different structure)
                     config = types.GenerateContentConfig(
                         response_modalities=["IMAGE"],
                     )
-                    # Set aspect ratio in config dict if supported
-                    if hasattr(config, 'image_config'):
-                        config.image_config = {"aspect_ratio": self.aspect_ratio}
+                    # Try to set aspect ratio if the config supports it
+                    try:
+                        if hasattr(config, 'image_config'):
+                            # If image_config attribute exists, try to set it
+                            config.image_config = {"aspect_ratio": self.aspect_ratio}
+                    except (AttributeError, TypeError):
+                        # If setting fails, continue without aspect ratio
+                        pass
 
                 response = genai_client.models.generate_content(
                     model=IMAGE_GENERATION_MODEL,
