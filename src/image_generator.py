@@ -151,58 +151,38 @@ class ImageGenerator:
         pil_image = None
 
         # Try different response structures based on API version
+        # The API structure changed - response might have candidates[0].content.parts
         try:
-            # New API structure - response might have candidates or direct access
+            # Method 1: New API structure with candidates
             if hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content:
-                        if hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'inline_data') and part.inline_data:
-                                    img_bytes = part.inline_data.data
-                                    pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
-                                    break
-                        elif hasattr(candidate.content, 'parts') is False:
-                            # Try direct access
-                            if hasattr(candidate.content, 'inline_data'):
-                                img_bytes = candidate.content.inline_data.data
+                candidate = response.candidates[0]  # Get first candidate
+                if hasattr(candidate, 'content'):
+                    content = candidate.content
+                    if hasattr(content, 'parts'):
+                        for part in content.parts:
+                            if hasattr(part, 'inline_data') and part.inline_data:
+                                img_bytes = part.inline_data.data
                                 pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
-                    if pil_image:
-                        break
-            # Old API structure - direct parts access
+                                break
+            # Method 2: Direct parts access (old API)
             elif hasattr(response, 'parts'):
                 for part in response.parts:
                     if hasattr(part, 'inline_data') and part.inline_data:
                         img_bytes = part.inline_data.data
                         pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
                         break
-            # Try response as iterable
-            else:
-                # Check if response itself contains the data
-                for item in response:
-                    if hasattr(item, 'inline_data') and item.inline_data:
-                        img_bytes = item.inline_data.data
-                        pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
-                        break
-        except Exception as e:
-            # Debug: print response structure
-            print(f"Response type: {type(response)}")
-            print(f"Response attributes: {dir(response)}")
+        except (AttributeError, IndexError, KeyError) as e:
+            # Debug: print response structure for troubleshooting
+            print(f"DEBUG: Response type: {type(response)}")
+            print(f"DEBUG: Response dir: {[attr for attr in dir(response) if not attr.startswith('_')]}")
             if hasattr(response, 'candidates'):
-                print(f"Candidates: {response.candidates}")
-            raise RuntimeError(f"Could not extract image from response: {e}")
+                print(f"DEBUG: Candidates: {response.candidates}")
+                if response.candidates:
+                    print(f"DEBUG: First candidate dir: {[attr for attr in dir(response.candidates[0]) if not attr.startswith('_')]}")
+            raise RuntimeError(f"Could not extract image from response structure: {e}. Response type: {type(response)}")
 
         if pil_image is None:
-            # Last resort: try to access response directly
-            try:
-                # Some API versions return data directly
-                if hasattr(response, 'data'):
-                    img_bytes = response.data
-                    pil_image = Image.open(BytesIO(img_bytes)).convert("RGB")
-                else:
-                    raise RuntimeError("No image returned - could not find image data in response")
-            except Exception as e:
-                raise RuntimeError(f"No image returned: {e}")
+            raise RuntimeError("No image returned - could not find image data in response")
 
         pil_image.save(file_path)
         self.previous_image = pil_image
