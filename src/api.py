@@ -854,8 +854,8 @@ async def health_check():
 
 # Serve static files (images) - Mount AFTER API routes
 # Use absolute paths to ensure files are found in production
-import pathlib
-BASE_DIR = pathlib.Path(__file__).parent.parent
+from pathlib import Path
+BASE_DIR = Path(__file__).parent.parent
 
 if os.path.exists("scene_images") or (BASE_DIR / "scene_images").exists():
     scene_images_path = "scene_images" if os.path.exists("scene_images") else str(BASE_DIR / "scene_images")
@@ -872,7 +872,6 @@ suggestion_paths = [
     "suggestion",  # Current directory
     str(BASE_DIR / "suggestion"),  # Project root
     "/app/suggestion",  # Railway absolute path
-    str(Path("/app") / "suggestion"),  # Railway with Path
 ]
 
 suggestion_found = None
